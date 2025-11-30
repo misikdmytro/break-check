@@ -35,7 +35,7 @@ impl RateLimiter for RateLimiterImpl {
             Duration::from_secs(60),
         );
 
-        let ttl = std::time::Duration::from_secs(100);
+        let ttl = std::time::Duration::from_secs(3);
         let retry_interval = std::time::Duration::from_millis(100);
         let max_retries = 5;
 
@@ -63,7 +63,7 @@ impl RateLimiter for RateLimiterImpl {
                         allowed: false,
                     }))
                 }
-                e => Err(Status::internal(format!(
+                e => Err(Status::unavailable(format!(
                     "Failed to acquire rate limit: {:?}",
                     e
                 ))),
