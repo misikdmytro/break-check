@@ -1,0 +1,27 @@
+syntax = "proto3";
+
+package ratelimiter;
+
+service RateLimiter {
+  // Acquire permission to proceed with a request
+  rpc Acquire(AcquireRequest) returns (AcquireResponse);
+}
+
+message AcquireRequest {
+  // Unique identifier for the client/resource (e.g., user_id, ip_address)
+  string key = 1;
+
+  // Number of tokens to consume (default: 1)
+  int32 tokens = 2;
+}
+
+message AcquireResponse {
+  // Whether the request is allowed
+  bool allowed = 1;
+
+  // Remaining tokens available
+  int32 remaining = 2;
+
+  // Time until the rate limit resets (seconds)
+  int64 reset_after = 3;
+}
