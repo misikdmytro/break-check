@@ -39,12 +39,12 @@ impl RateLimiter for RateLimiterImpl {
         let retry_interval = std::time::Duration::from_millis(100);
         let max_retries = 5;
 
-        let mut lock = storage
+        let mut rate_limit = storage
             .acquire_rate_limit_lock(&rl, ttl, retry_interval, max_retries)
             .await
             .map_err(|e| Status::internal(format!("Failed to acquire rate limit lock: {}", e)))?;
 
-        let result = lock.as_mut().acquire().await;
+        let result = rate_limit.as_mut().acquire().await;
 
         match result {
             Ok(AcquireRateLimitResult {
