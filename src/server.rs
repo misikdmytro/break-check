@@ -2,20 +2,21 @@ use std::time::Duration;
 
 use crate::common::to_unix_millis;
 use crate::db::{
-    AcquireRateLimitResult, RateLimit, RateLimitAcquireErr, RateLimitConfig, RedisStorage, Storage,
+    AcquireRateLimitResult, RateLimit, RateLimitAcquireErr, RateLimitConfig, RedisRateLimit,
 };
 use crate::proto::rate_limiter_server::RateLimiter;
 use crate::proto::{AcquireRequest, AcquireResponse};
+use redis::aio::MultiplexedConnection;
 use tonic::{Request, Response, Status};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RateLimiterImpl {
-    storage: RedisStorage,
+    conn: MultiplexedConnection,
 }
 
 impl RateLimiterImpl {
-    pub fn new(storage: RedisStorage) -> Self {
-        RateLimiterImpl { storage }
+    pub fn new(conn: MultiplexedConnection) -> Self {
+        RateLimiterImpl { conn }
     }
 }
 
@@ -25,7 +26,6 @@ impl RateLimiter for RateLimiterImpl {
         &self,
         request: Request<AcquireRequest>,
     ) -> Result<Response<AcquireResponse>, Status> {
-        let mut storage = self.storage.clone();
         let request = request.get_ref();
 
         let rl = RateLimitConfig::new(
@@ -35,16 +35,7 @@ impl RateLimiter for RateLimiterImpl {
             Duration::from_secs(60),
         );
 
-        let ttl = std::time::Duration::from_secs(3);
-        let retry_interval = std::time::Duration::from_millis(100);
-        let max_retries = 5;
-
-        let mut rate_limit = storage
-            .acquire_rate_limit_lock(&rl, ttl, retry_interval, max_retries)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to acquire rate limit lock: {}", e)))?;
-
-        let result = rate_limit.as_mut().acquire().await;
+        let result = RedisRateLimit::new(self.conn.clone(), rl).acquire().await;
 
         match result {
             Ok(AcquireRateLimitResult {

@@ -13,7 +13,7 @@ pub struct RedisRateLimit {
 }
 
 impl RedisRateLimit {
-    pub(crate) fn new(conn: MultiplexedConnection, rl: RateLimitConfig) -> Self {
+    pub fn new(conn: MultiplexedConnection, rl: RateLimitConfig) -> Self {
         RedisRateLimit { conn, rl }
     }
 }
@@ -22,19 +22,6 @@ macro_rules! format_key {
     ($key:expr, $window:expr) => {
         format!("{}.rate_limit.window.{}", $key, $window)
     };
-}
-
-async fn get_value_or_zero(
-    mut conn: MultiplexedConnection,
-    key: &str,
-) -> Result<u32, RateLimitAcquireErr> {
-    let value: Option<u32> = redis::cmd("GET")
-        .arg(key)
-        .query_async(&mut conn)
-        .await
-        .map_err(|e| RateLimitAcquireErr::RedisError(e))?;
-
-    Ok(value.unwrap_or_default())
 }
 
 impl RateLimit for RedisRateLimit {
@@ -48,24 +35,10 @@ impl RateLimit for RedisRateLimit {
         let current_key = format_key!(self.rl.key, current_window);
         let previous_key = format_key!(self.rl.key, previous_window);
 
-        let current_future = get_value_or_zero(self.conn.clone(), &current_key);
-        let previous_future = get_value_or_zero(self.conn.clone(), &previous_key);
-
-        let (current, previous) = tokio::join!(current_future, previous_future);
-
-        let current: u32 = current?;
-        let previous: u32 = previous?;
-
-        let result = SlidingWindow::new(self.rl.max_requests, self.rl.window, previous, current)
-            .try_acquire(self.rl.tokens)
-            .map(|(remaining, reset_after)| AcquireRateLimitResult::new(remaining, reset_after))
-            .map_err(|e| match e {
-                RateLimitErr::RateLimitExceeded(reset_after) => {
-                    RateLimitAcquireErr::RateLimitExceeded(reset_after)
-                }
-            });
-
-        if let Ok(_) = result {
+        let mut current_conn = self.conn.clone();
+        let tokens = self.rl.tokens;
+        let window_secs = self.rl.window.as_secs();
+        let current_future = async move {
             let script = redis::Script::new(
                 r#"
                     local key = KEYS[1]
@@ -75,19 +48,44 @@ impl RateLimit for RedisRateLimit {
                     local new_value = redis.call('INCRBY', key, increment)
                     redis.call('EXPIRE', key, ttl)
                     
-                    return new_value
+                    return new_value - increment
                 "#,
             );
 
-            let _: u32 = script
+            let value = script
                 .key(&current_key)
-                .arg(self.rl.tokens)
-                .arg(self.rl.window.as_secs() * 2) // TTL should be at least double the window
-                .invoke_async(&mut self.conn)
+                .arg(tokens)
+                .arg(window_secs * 2) // TTL should be at least double the window
+                .invoke_async(&mut current_conn)
                 .await
                 .map_err(|e| RateLimitAcquireErr::RedisError(e))?;
+
+            Ok::<u32, RateLimitAcquireErr>(value)
         };
 
-        result
+        let mut previous_conn = self.conn.clone();
+        let previous_future = async move {
+            let value: Option<u32> = redis::cmd("GET")
+                .arg(previous_key)
+                .query_async(&mut previous_conn)
+                .await
+                .map_err(|e| RateLimitAcquireErr::RedisError(e))?;
+
+            Ok::<u32, RateLimitAcquireErr>(value.unwrap_or_default())
+        };
+
+        let (current, previous) = tokio::join!(current_future, previous_future);
+
+        let current = current?;
+        let previous = previous?;
+
+        SlidingWindow::new(self.rl.max_requests, self.rl.window, previous, current)
+            .try_acquire(self.rl.tokens)
+            .map(|(remaining, reset_after)| AcquireRateLimitResult::new(remaining, reset_after))
+            .map_err(|e| match e {
+                RateLimitErr::RateLimitExceeded(reset_after) => {
+                    RateLimitAcquireErr::RateLimitExceeded(reset_after)
+                }
+            })
     }
 }
