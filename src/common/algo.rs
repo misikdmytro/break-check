@@ -4,13 +4,13 @@ use thiserror::Error;
 use crate::common::{Clock, SystemClock, to_unix_millis};
 
 #[derive(Error, Debug)]
-pub enum RateLimitErr {
+pub enum RateLimitAlgorithmErr {
     #[error("Rate limit exceeded. Reset after {0:?}")]
     RateLimitExceeded(SystemTime),
 }
 
 pub trait RateLimitAlgorithm {
-    fn try_acquire(&self, tokens: u32) -> Result<(u32, SystemTime), RateLimitErr>;
+    fn try_acquire(&self, tokens: u32) -> Result<(u32, SystemTime), RateLimitAlgorithmErr>;
 }
 
 #[derive(Debug, Clone)]
@@ -56,30 +56,30 @@ impl SlidingWindow<SystemClock> {
 }
 
 impl<C: Clock> RateLimitAlgorithm for SlidingWindow<C> {
-    fn try_acquire(&self, tokens: u32) -> Result<(u32, SystemTime), RateLimitErr> {
+    fn try_acquire(&self, tokens: u32) -> Result<(u32, SystemTime), RateLimitAlgorithmErr> {
         let window_ms = self.window.as_millis();
 
         let now = self.clock.now();
         let unix_now = to_unix_millis(now);
 
         let time_in_current_window = unix_now % window_ms;
-        let remained_in_current_window = window_ms - time_in_current_window;
+        let remaining_window_time = window_ms - time_in_current_window;
 
-        let reset_after = now + Duration::from_millis(remained_in_current_window as u64);
+        let reset_after = now + Duration::from_millis(remaining_window_time as u64);
 
         if self.current_requests.saturating_add(tokens) > self.max_requests {
-            return Err(RateLimitErr::RateLimitExceeded(reset_after));
+            return Err(RateLimitAlgorithmErr::RateLimitExceeded(reset_after));
         }
 
-        let multiplier = remained_in_current_window as f64 / window_ms as f64;
+        let previous_window_weight = remaining_window_time as f64 / window_ms as f64;
         let used = self
             .current_requests
-            .saturating_add((self.previous_requests as f64 * multiplier).round() as u32);
+            .saturating_add((self.previous_requests as f64 * previous_window_weight).round() as u32);
 
         let possible_used = used.saturating_add(tokens);
 
         if possible_used > self.max_requests {
-            Err(RateLimitErr::RateLimitExceeded(reset_after))
+            Err(RateLimitAlgorithmErr::RateLimitExceeded(reset_after))
         } else {
             Ok((self.max_requests.saturating_sub(possible_used), reset_after))
         }
@@ -158,10 +158,10 @@ mod tests {
         );
 
         let result = algorithm.try_acquire(tokens);
-        if let Err(RateLimitErr::RateLimitExceeded(reset_after)) = result {
+        if let Err(RateLimitAlgorithmErr::RateLimitExceeded(reset_after)) = result {
             assert!(reset_after > now);
         } else {
-            panic!("Expected TooManyRequests error");
+            panic!("Expected RateLimitExceeded error");
         }
     }
 

@@ -1,3 +1,3 @@
-mod rate;
+mod store;
 
-pub use rate::*;
+pub use store::*;

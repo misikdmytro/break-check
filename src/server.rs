@@ -1,13 +1,14 @@
 use std::time::Duration;
 
 use crate::common::to_unix_millis;
-use crate::db::{
-    AcquireRateLimitResult, RateLimit, RateLimitAcquireErr, RateLimitConfig, RedisRateLimit,
-};
+use crate::db::{AcquireErr, RateLimitStore, RateLimitConfig, RedisRateLimit, TokensRemaining};
 use crate::proto::rate_limiter_server::RateLimiter;
 use crate::proto::{AcquireRequest, AcquireResponse};
 use redis::aio::MultiplexedConnection;
 use tonic::{Request, Response, Status};
+
+const DEFAULT_MAX_REQUESTS_PER_WINDOW: u32 = 10;
+const DEFAULT_WINDOW_DURATION_SECS: u64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct RateLimiterImpl {
@@ -31,14 +32,14 @@ impl RateLimiter for RateLimiterImpl {
         let rl = RateLimitConfig::new(
             request.key.to_string(),
             request.tokens as u32,
-            10,
-            Duration::from_secs(60),
+            DEFAULT_MAX_REQUESTS_PER_WINDOW,
+            Duration::from_secs(DEFAULT_WINDOW_DURATION_SECS),
         );
 
         let result = RedisRateLimit::new(self.conn.clone(), rl).acquire().await;
 
         match result {
-            Ok(AcquireRateLimitResult {
+            Ok(TokensRemaining {
                 remaining,
                 reset_after,
             }) => Ok(Response::new(AcquireResponse {
@@ -47,13 +48,11 @@ impl RateLimiter for RateLimiterImpl {
                 allowed: true,
             })),
             Err(e) => match e {
-                RateLimitAcquireErr::RateLimitExceeded(reset_after) => {
-                    Ok(Response::new(AcquireResponse {
-                        remaining: 0,
-                        reset_after: to_unix_millis(reset_after) as i64,
-                        allowed: false,
-                    }))
-                }
+                AcquireErr::RateLimitExceeded(reset_after) => Ok(Response::new(AcquireResponse {
+                    remaining: 0,
+                    reset_after: to_unix_millis(reset_after) as i64,
+                    allowed: false,
+                })),
                 e => Err(Status::unavailable(format!(
                     "Failed to acquire rate limit: {:?}",
                     e
