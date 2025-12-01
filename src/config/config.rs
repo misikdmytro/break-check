@@ -13,6 +13,9 @@ pub struct Config {
 pub struct ServerConfig {
     pub address: String,
     pub redis_url: String,
+
+    #[serde(default = "default_redis_timeout_ms")]
+    pub redis_timeout_ms: u64,
 }
 
 #[derive(Debug, Copy, Deserialize, Clone)]
@@ -40,6 +43,10 @@ pub struct PolicyRule {
 pub enum PatternType {
     Exact,
     Prefix,
+}
+
+fn default_redis_timeout_ms() -> u64 {
+    100
 }
 
 fn default_priority() -> u32 {

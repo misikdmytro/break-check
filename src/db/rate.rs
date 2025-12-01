@@ -10,6 +10,9 @@ pub enum AcquireErr {
 
     #[error("Redis error: {0}")]
     RedisError(#[from] redis::RedisError),
+
+    #[error("Timeout error")]
+    Timeout,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -2,6 +2,7 @@ use crate::common::to_unix_millis;
 use crate::db::{AcquireErr, RateLimitConfig, RateLimitStore, TokensRemaining};
 use crate::proto::rate_limiter_server::RateLimiter;
 use crate::proto::{AcquireRequest, AcquireResponse};
+use log::error;
 use tonic::{Request, Response, Status};
 
 #[derive(Debug, Clone)]
@@ -51,10 +52,17 @@ impl<R: RateLimitStore + 'static + Send + Sync + Clone> RateLimiter for RateLimi
                     reset_after: to_unix_millis(reset_after) as i64,
                     allowed: false,
                 })),
-                e => Err(Status::unavailable(format!(
-                    "Failed to acquire rate limit: {:?}",
-                    e
-                ))),
+                AcquireErr::Timeout => {
+                    error!("Rate limit acquisition timed out");
+
+                    Err(Status::deadline_exceeded(
+                        "Rate limit acquisition timed out",
+                    ))
+                }
+                AcquireErr::RedisError(e) => {
+                    error!("Redis error: {:?}", e);
+                    Err(Status::unavailable("Failed to acquire rate limit"))
+                }
             },
         }
     }

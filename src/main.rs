@@ -4,7 +4,7 @@ mod db;
 mod proto;
 mod server;
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use log::{LevelFilter, debug};
 use proto::rate_limiter_server::RateLimiterServer;
@@ -33,6 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let rate_limit = RedisRateLimit::new(
         conn,
+        Duration::from_millis(config.server.redis_timeout_ms),
         Arc::new(config.default_policy),
         Arc::new(config.policies),
         SlidingWindow::new(),
