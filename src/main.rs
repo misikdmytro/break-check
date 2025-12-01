@@ -1,29 +1,43 @@
 mod common;
+mod config;
 mod db;
 mod proto;
 mod server;
 
-use std::env;
+use std::sync::Arc;
 
+use log::{LevelFilter, debug};
 use proto::rate_limiter_server::RateLimiterServer;
 use redis::AsyncConnectionConfig;
 use server::RateLimiterImpl;
+use simple_logger::SimpleLogger;
 use tokio::signal;
 
-use crate::{common::SlidingWindow, db::RedisRateLimit};
+use crate::{common::SlidingWindow, config::load_config, db::RedisRateLimit};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::]:50051".parse()?;
+    let _ = log::set_boxed_logger(Box::new(SimpleLogger::new()))
+        .map(|()| log::set_max_level(LevelFilter::Debug));
 
-    let conn = env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".to_string());
-    let config = AsyncConnectionConfig::default();
-    let client = redis::Client::open(conn)?;
+    let config = load_config("./config/config.toml")?;
+    debug!("Loaded config: {:?}", config);
+
+    let addr = config.server.address.parse()?;
+
+    let redis_config = AsyncConnectionConfig::default();
+    let client = redis::Client::open(config.server.redis_url)?;
     let conn = client
-        .get_multiplexed_async_connection_with_config(&config)
+        .get_multiplexed_async_connection_with_config(&redis_config)
         .await?;
 
-    let rate_limit = RedisRateLimit::new(conn, SlidingWindow::new());
+    let rate_limit = RedisRateLimit::new(
+        conn,
+        Arc::new(config.default_policy),
+        Arc::new(config.policies),
+        SlidingWindow::new(),
+    );
+
     let rate_limiter = RateLimiterImpl::new(rate_limit);
 
     println!("Server listening on {}", addr);

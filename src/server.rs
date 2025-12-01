@@ -1,13 +1,8 @@
-use std::time::Duration;
-
 use crate::common::to_unix_millis;
 use crate::db::{AcquireErr, RateLimitConfig, RateLimitStore, TokensRemaining};
 use crate::proto::rate_limiter_server::RateLimiter;
 use crate::proto::{AcquireRequest, AcquireResponse};
 use tonic::{Request, Response, Status};
-
-const DEFAULT_MAX_REQUESTS_PER_WINDOW: u32 = 10;
-const DEFAULT_WINDOW_DURATION_SECS: u64 = 60;
 
 #[derive(Debug, Clone)]
 pub struct RateLimiterImpl<R: RateLimitStore> {
@@ -27,16 +22,20 @@ impl<R: RateLimitStore + 'static + Send + Sync + Clone> RateLimiter for RateLimi
         request: Request<AcquireRequest>,
     ) -> Result<Response<AcquireResponse>, Status> {
         let request = request.get_ref();
+        if request.tokens <= 0 {
+            return Err(Status::invalid_argument(
+                "Tokens to acquire must be greater than zero",
+            ));
+        }
 
-        let rl = RateLimitConfig::new(
-            request.key.to_string(),
-            request.tokens as u32,
-            DEFAULT_MAX_REQUESTS_PER_WINDOW,
-            Duration::from_secs(DEFAULT_WINDOW_DURATION_SECS),
-        );
+        if request.key.is_empty() {
+            return Err(Status::invalid_argument("Key must not be empty"));
+        }
+
+        let config = RateLimitConfig::new(request.key.to_string(), request.tokens as u32);
 
         let mut rate_limit = self.rate_limit.clone();
-        let result = rate_limit.acquire(&rl).await;
+        let result = rate_limit.acquire(&config).await;
         match result {
             Ok(TokensRemaining {
                 remaining,

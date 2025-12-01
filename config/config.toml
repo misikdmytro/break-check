@@ -1,0 +1,46 @@
+# config.toml
+
+[server]
+address = "[::]:50051"
+redis_url = "redis://127.0.0.1/"
+
+# Default policy for unmatched keys
+[default_policy]
+max_tokens = 10
+window_secs = 60
+
+# Policy definitions with patterns
+[[policies]]
+pattern = "user.login"
+type = "exact"
+max_tokens = 5
+window_secs = 60
+priority = 100
+
+[[policies]]
+pattern = "user."
+type = "prefix"
+max_tokens = 100
+window_secs = 60
+priority = 50
+
+[[policies]]
+pattern = "api.public."
+type = "prefix"
+max_tokens = 1000
+window_secs = 60
+priority = 50
+
+[[policies]]
+pattern = "api.internal."
+type = "prefix"
+max_tokens = 10000
+window_secs = 60
+priority = 50
+
+[[policies]]
+pattern = "admin."
+type = "prefix"
+max_tokens = 50
+window_secs = 300  # 5 minutes
+priority = 60

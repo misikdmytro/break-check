@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 use async_trait::async_trait;
 use thiserror::Error;
@@ -38,22 +38,13 @@ pub trait RateLimitStore {
 pub struct RateLimitConfig {
     pub(in crate::db) resource_key: String,
     pub(in crate::db) tokens_to_acquire: u32,
-    pub(in crate::db) max_tokens_per_window: u32,
-    pub(in crate::db) window_duration: Duration,
 }
 
 impl RateLimitConfig {
-    pub fn new(
-        resource_key: String,
-        tokens_to_acquire: u32,
-        max_tokens_per_window: u32,
-        window_duration: Duration,
-    ) -> Self {
+    pub fn new(resource_key: String, tokens_to_acquire: u32) -> Self {
         RateLimitConfig {
             resource_key,
             tokens_to_acquire,
-            max_tokens_per_window,
-            window_duration,
         }
     }
 }
