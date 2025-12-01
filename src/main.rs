@@ -8,6 +8,7 @@ use std::env;
 use proto::rate_limiter_server::RateLimiterServer;
 use redis::AsyncConnectionConfig;
 use server::RateLimiterImpl;
+use tokio::signal;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -26,8 +27,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tonic::transport::Server::builder()
         .add_service(RateLimiterServer::new(rate_limiter))
-        .serve(addr)
+        .serve_with_shutdown(addr, shutdown_signal())
         .await?;
 
+    println!("Server shutdown gracefully");
+
     Ok(())
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    println!("Shutdown signal received, starting graceful shutdown...");
 }
