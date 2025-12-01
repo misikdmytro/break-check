@@ -1,5 +1,5 @@
 use std::{
-    sync::Arc,
+    sync::{Arc, LazyLock},
     time::{Duration, SystemTime},
 };
 
@@ -58,10 +58,25 @@ macro_rules! timeout {
         match tokio::time::timeout($duration, $fut).await {
             Ok(Ok(res)) => Ok(res),
             Ok(Err(e)) => Err(AcquireErr::RedisError(e)),
-            Err(_) => Err(AcquireErr::Timeout),
+            _ => Err(AcquireErr::Timeout),
         }
     }};
 }
+
+static SCRIPT: LazyLock<redis::Script> = LazyLock::new(|| {
+    redis::Script::new(
+        r#"
+    local key = KEYS[1]
+    local increment = tonumber(ARGV[1])
+    local ttl = tonumber(ARGV[2])
+
+    local new_value = redis.call('INCRBY', key, increment)
+    redis.call('EXPIRE', key, ttl)
+
+    return new_value - increment
+"#,
+    )
+});
 
 #[async_trait]
 impl<A: RateLimitAlgorithm + Send> RateLimitStore for RedisRateLimit<A> {
@@ -96,22 +111,9 @@ impl<A: RateLimitAlgorithm + Send> RateLimitStore for RedisRateLimit<A> {
 
         let mut conn = self.conn.clone();
         let fetch_current = async {
-            let script = redis::Script::new(
-                r#"
-                    local key = KEYS[1]
-                    local increment = tonumber(ARGV[1])
-                    local ttl = tonumber(ARGV[2])
-
-                    local new_value = redis.call('INCRBY', key, increment)
-                    redis.call('EXPIRE', key, ttl)
-
-                    return new_value - increment
-                "#,
-            );
-
             timeout!(
                 self.timeout,
-                script
+                SCRIPT
                     .key(&current_key)
                     .arg(config.tokens_to_acquire)
                     .arg(policy.window_secs * 2) // TTL should be at least double the window
