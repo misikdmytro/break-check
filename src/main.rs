@@ -10,6 +10,8 @@ use redis::AsyncConnectionConfig;
 use server::RateLimiterImpl;
 use tokio::signal;
 
+use crate::{common::SlidingWindow, db::RedisRateLimit};
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "[::]:50051".parse()?;
@@ -21,7 +23,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_multiplexed_async_connection_with_config(&config)
         .await?;
 
-    let rate_limiter = RateLimiterImpl::new(conn);
+    let rate_limit = RedisRateLimit::new(conn, SlidingWindow::new());
+    let rate_limiter = RateLimiterImpl::new(rate_limit);
 
     println!("Server listening on {}", addr);
 

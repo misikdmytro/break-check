@@ -6,6 +6,8 @@ use crate::{
     },
     db::{AcquireErr, AcquireResult, RateLimitConfig, RateLimitStore, TokensRemaining},
 };
+
+use async_trait::async_trait;
 use redis::aio::MultiplexedConnection;
 
 #[derive(Debug, Clone)]
@@ -26,7 +28,17 @@ macro_rules! format_key {
     };
 }
 
-impl<A: RateLimitAlgorithm> RateLimitStore for RedisRateLimit<A> {
+macro_rules! join_and_unwrap {
+    ($fut1:expr, $fut2:expr) => {
+        {
+            let (res1, res2) = tokio::join!($fut1, $fut2);
+            (res1?, res2?)
+        }
+    };
+}
+
+#[async_trait]
+impl<A: RateLimitAlgorithm + Send> RateLimitStore for RedisRateLimit<A> {
     async fn acquire(&mut self, config: &RateLimitConfig) -> AcquireResult {
         let now = to_unix_millis(SystemTime::now());
 
@@ -76,10 +88,7 @@ impl<A: RateLimitAlgorithm> RateLimitStore for RedisRateLimit<A> {
             Ok::<u32, AcquireErr>(value.unwrap_or_default())
         };
 
-        let (current, previous) = tokio::join!(fetch_current, fetch_previous);
-
-        let current = current?;
-        let previous = previous?;
+        let (current, previous) = join_and_unwrap!(fetch_current, fetch_previous);
 
         let attempt = AcquireAttempt::new(
             config.tokens_to_acquire,
@@ -98,4 +107,5 @@ impl<A: RateLimitAlgorithm> RateLimitStore for RedisRateLimit<A> {
                 }
             })
     }
+    
 }

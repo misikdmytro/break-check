@@ -1,28 +1,27 @@
 use std::time::Duration;
 
-use crate::common::{SlidingWindow, to_unix_millis};
-use crate::db::{AcquireErr, RateLimitConfig, RateLimitStore, RedisRateLimit, TokensRemaining};
+use crate::common::to_unix_millis;
+use crate::db::{AcquireErr, RateLimitConfig, RateLimitStore, TokensRemaining};
 use crate::proto::rate_limiter_server::RateLimiter;
 use crate::proto::{AcquireRequest, AcquireResponse};
-use redis::aio::MultiplexedConnection;
 use tonic::{Request, Response, Status};
 
 const DEFAULT_MAX_REQUESTS_PER_WINDOW: u32 = 10;
 const DEFAULT_WINDOW_DURATION_SECS: u64 = 60;
 
 #[derive(Debug, Clone)]
-pub struct RateLimiterImpl {
-    conn: MultiplexedConnection,
+pub struct RateLimiterImpl<R: RateLimitStore> {
+    rate_limit: R,
 }
 
-impl RateLimiterImpl {
-    pub fn new(conn: MultiplexedConnection) -> Self {
-        RateLimiterImpl { conn }
+impl<R: RateLimitStore> RateLimiterImpl<R> {
+    pub fn new(rate_limit: R) -> Self {
+        RateLimiterImpl { rate_limit }
     }
 }
 
 #[tonic::async_trait]
-impl RateLimiter for RateLimiterImpl {
+impl<R: RateLimitStore + 'static + Send + Sync + Clone> RateLimiter for RateLimiterImpl<R> {
     async fn acquire(
         &self,
         request: Request<AcquireRequest>,
@@ -36,10 +35,8 @@ impl RateLimiter for RateLimiterImpl {
             Duration::from_secs(DEFAULT_WINDOW_DURATION_SECS),
         );
 
-        let result = RedisRateLimit::new(self.conn.clone(), SlidingWindow::new())
-            .acquire(&rl)
-            .await;
-
+        let mut rate_limit = self.rate_limit.clone();
+        let result = rate_limit.acquire(&rl).await;
         match result {
             Ok(TokensRemaining {
                 remaining,

@@ -1,5 +1,6 @@
 use std::time::{Duration, SystemTime};
 
+use async_trait::async_trait;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -11,7 +12,7 @@ pub enum AcquireErr {
     RedisError(#[from] redis::RedisError),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TokensRemaining {
     pub remaining: u32,
     pub reset_after: SystemTime,
@@ -28,11 +29,12 @@ impl TokensRemaining {
     }
 }
 
+#[async_trait]
 pub trait RateLimitStore {
     async fn acquire(&mut self, config: &RateLimitConfig) -> AcquireResult;
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq, Ord, Default, Hash)]
 pub struct RateLimitConfig {
     pub(in crate::db) resource_key: String,
     pub(in crate::db) tokens_to_acquire: u32,

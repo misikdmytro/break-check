@@ -12,6 +12,7 @@ tonic-prost = "0.14"
 redis = { version = "0.32", features = ["tokio-comp"] }
 thiserror = "2.0"
 uuid = { version = "1.18", features = ["v4"] }
+async-trait = "0.1"
 
 [dev-dependencies]
 rstest = "0.26"
