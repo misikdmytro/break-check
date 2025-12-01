@@ -29,7 +29,7 @@ impl TokensRemaining {
 }
 
 pub trait RateLimitStore {
-    async fn acquire(&mut self) -> AcquireResult;
+    async fn acquire(&mut self, config: &RateLimitConfig) -> AcquireResult;
 }
 
 #[derive(Debug, Clone)]

@@ -9,55 +9,60 @@ pub enum RateLimitAlgorithmErr {
     RateLimitExceeded(SystemTime),
 }
 
-pub trait RateLimitAlgorithm {
-    fn try_acquire(&self, tokens: u32) -> Result<(u32, SystemTime), RateLimitAlgorithmErr>;
+pub struct AcquireAttempt {
+    pub(self) tokens_to_acquire: u32,
+    pub(self) max_tokens_per_window: u32,
+    pub(self) window_duration: Duration,
+    pub(self) previous_window_requests: u32,
+    pub(self) current_window_requests: u32,
 }
 
-#[derive(Debug, Clone)]
-pub struct SlidingWindow<C: Clock> {
-    max_requests: u32,
-    window: Duration,
-    previous_requests: u32,
-    current_requests: u32,
-    clock: C,
-}
-
-impl SlidingWindow<SystemClock> {
+impl AcquireAttempt {
     pub fn new(
-        max_requests: u32,
-        window: Duration,
-        previous_requests: u32,
-        current_requests: u32,
+        tokens_to_acquire: u32,
+        max_tokens_per_window: u32,
+        window_duration: Duration,
+        previous_window_requests: u32,
+        current_window_requests: u32,
     ) -> Self {
-        Self::with_clock(
-            max_requests,
-            window,
-            previous_requests,
-            current_requests,
-            SystemClock,
-        )
-    }
-
-    pub fn with_clock<C: Clock>(
-        max_requests: u32,
-        window: Duration,
-        previous_requests: u32,
-        current_requests: u32,
-        clock: C,
-    ) -> SlidingWindow<C> {
-        SlidingWindow {
-            max_requests,
-            window,
-            previous_requests,
-            current_requests,
-            clock,
+        AcquireAttempt {
+            tokens_to_acquire,
+            max_tokens_per_window,
+            window_duration,
+            previous_window_requests,
+            current_window_requests,
         }
     }
 }
 
+pub trait RateLimitAlgorithm {
+    fn try_acquire(
+        &self,
+        attempt: &AcquireAttempt,
+    ) -> Result<(u32, SystemTime), RateLimitAlgorithmErr>;
+}
+
+#[derive(Debug, Clone)]
+pub struct SlidingWindow<C: Clock> {
+    clock: C,
+}
+
+impl SlidingWindow<SystemClock> {
+    pub fn new() -> Self {
+        Self::with_clock(SystemClock)
+    }
+
+    pub fn with_clock<C: Clock>(clock: C) -> SlidingWindow<C> {
+        SlidingWindow { clock }
+    }
+}
+
 impl<C: Clock> RateLimitAlgorithm for SlidingWindow<C> {
-    fn try_acquire(&self, tokens: u32) -> Result<(u32, SystemTime), RateLimitAlgorithmErr> {
-        let window_ms = self.window.as_millis();
+    fn try_acquire(
+        &self,
+        attempt: &AcquireAttempt,
+    ) -> Result<(u32, SystemTime), RateLimitAlgorithmErr> {
+        let window_ms = attempt.window_duration.as_millis();
 
         let now = self.clock.now();
         let unix_now = to_unix_millis(now);
@@ -67,21 +72,27 @@ impl<C: Clock> RateLimitAlgorithm for SlidingWindow<C> {
 
         let reset_after = now + Duration::from_millis(remaining_window_time as u64);
 
-        if self.current_requests.saturating_add(tokens) > self.max_requests {
+        if attempt
+            .current_window_requests
+            .saturating_add(attempt.tokens_to_acquire)
+            > attempt.max_tokens_per_window
+        {
             return Err(RateLimitAlgorithmErr::RateLimitExceeded(reset_after));
         }
 
         let previous_window_weight = remaining_window_time as f64 / window_ms as f64;
-        let used = self
-            .current_requests
-            .saturating_add((self.previous_requests as f64 * previous_window_weight).round() as u32);
+        let used = attempt.current_window_requests.saturating_add(
+            (attempt.previous_window_requests as f64 * previous_window_weight).round() as u32,
+        );
 
-        let possible_used = used.saturating_add(tokens);
-
-        if possible_used > self.max_requests {
+        let possible_used = used.saturating_add(attempt.tokens_to_acquire);
+        if possible_used > attempt.max_tokens_per_window {
             Err(RateLimitAlgorithmErr::RateLimitExceeded(reset_after))
         } else {
-            Ok((self.max_requests.saturating_sub(possible_used), reset_after))
+            Ok((
+                attempt.max_tokens_per_window.saturating_sub(possible_used),
+                reset_after,
+            ))
         }
     }
 }
@@ -96,6 +107,7 @@ mod tests {
 
     #[rstest]
     #[case(1761948300000, 10, 60, 9, 0, 1, 0)] // 2025-11-01 12:05:00 UTC
+    #[case(1761948300000, 10, 60, 8, 0, 1, 1)] // 2025-11-01 12:05:00 UTC
     #[case(1761948330000, 10, 60, 8, 5, 1, 0)] // 2025-11-01 12:05:30 UTC
     #[case(1761948359999, 10, 60, 10, 9, 1, 0)] // 2025-11-01 12:05:59.999 UTC
     #[case(1761948300000, 10, 60, 8, 0, 2, 0)] // 2025-11-01 12:05:00 UTC
@@ -115,15 +127,17 @@ mod tests {
         let now = from_unix_millis(now_millis);
         clock.expect_now().return_const(now);
 
-        let algorithm = SlidingWindow::with_clock(
-            max_requests,
-            Duration::from_secs(window_secs),
-            previous_requests,
-            current_requests,
-            clock,
-        );
+        let algorithm = SlidingWindow::with_clock(clock);
 
-        let (remaining, reset_after) = algorithm.try_acquire(tokens).unwrap();
+        let attempt = AcquireAttempt {
+            tokens_to_acquire: tokens,
+            max_tokens_per_window: max_requests,
+            window_duration: Duration::from_secs(window_secs),
+            previous_window_requests: previous_requests,
+            current_window_requests: current_requests,
+        };
+
+        let (remaining, reset_after) = algorithm.try_acquire(&attempt).unwrap();
 
         assert!(reset_after > now);
         assert_eq!(remaining, expected_remaining);
@@ -149,15 +163,17 @@ mod tests {
         let now = from_unix_millis(now_millis);
         clock.expect_now().return_const(now);
 
-        let algorithm = SlidingWindow::with_clock(
-            max_requests,
-            Duration::from_secs(window_secs),
-            previous_requests,
-            current_requests,
-            clock,
-        );
+        let algorithm = SlidingWindow::with_clock(clock);
 
-        let result = algorithm.try_acquire(tokens);
+        let attempt = AcquireAttempt {
+            tokens_to_acquire: tokens,
+            max_tokens_per_window: max_requests,
+            window_duration: Duration::from_secs(window_secs),
+            previous_window_requests: previous_requests,
+            current_window_requests: current_requests,
+        };
+
+        let result = algorithm.try_acquire(&attempt);
         if let Err(RateLimitAlgorithmErr::RateLimitExceeded(reset_after)) = result {
             assert!(reset_after > now);
         } else {
@@ -179,15 +195,17 @@ mod tests {
             let now = from_unix_millis(now_millis);
             clock.expect_now().return_const(now);
 
-            let algorithm = SlidingWindow::with_clock(
-                max_requests,
-                Duration::from_secs(window_secs),
-                previous_requests,
-                current_requests,
-                clock,
-            );
+            let attempt = AcquireAttempt {
+                tokens_to_acquire: tokens,
+                max_tokens_per_window: max_requests,
+                window_duration: Duration::from_secs(window_secs),
+                previous_window_requests: previous_requests,
+                current_window_requests: current_requests,
+            };
 
-            let _ = algorithm.try_acquire(tokens);
+            let algorithm = SlidingWindow::with_clock(clock);
+
+            let _ = algorithm.try_acquire(&attempt);
         }
     }
 }

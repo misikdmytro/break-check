@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use crate::common::to_unix_millis;
-use crate::db::{AcquireErr, RateLimitStore, RateLimitConfig, RedisRateLimit, TokensRemaining};
+use crate::common::{SlidingWindow, to_unix_millis};
+use crate::db::{AcquireErr, RateLimitConfig, RateLimitStore, RedisRateLimit, TokensRemaining};
 use crate::proto::rate_limiter_server::RateLimiter;
 use crate::proto::{AcquireRequest, AcquireResponse};
 use redis::aio::MultiplexedConnection;
@@ -36,7 +36,9 @@ impl RateLimiter for RateLimiterImpl {
             Duration::from_secs(DEFAULT_WINDOW_DURATION_SECS),
         );
 
-        let result = RedisRateLimit::new(self.conn.clone(), rl).acquire().await;
+        let result = RedisRateLimit::new(self.conn.clone(), SlidingWindow::new())
+            .acquire(&rl)
+            .await;
 
         match result {
             Ok(TokensRemaining {
