@@ -7,6 +7,11 @@ service RateLimiter {
   rpc Acquire(AcquireRequest) returns (AcquireResponse);
 }
 
+service Health {
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc Watch(HealthCheckRequest) returns (stream HealthCheckResponse);
+}
+
 message AcquireRequest {
   // Unique identifier for the client/resource (e.g., user_id, ip_address)
   string key = 1;
@@ -24,4 +29,18 @@ message AcquireResponse {
 
   // Time until the rate limit resets (seconds)
   int64 reset_after = 3;
+}
+
+message HealthCheckRequest {
+  // Empty for now; can be extended in the future
+}
+
+message HealthCheckResponse {
+  // Serving status of the service
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+  }
+  ServingStatus status = 1;
 }

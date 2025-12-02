@@ -1,8 +1,9 @@
+use break_check::proto::AcquireRequest;
 use break_check::proto::rate_limiter_client::RateLimiterClient;
 use break_check::proto::rate_limiter_server::RateLimiterServer;
-use break_check::proto::AcquireRequest;
 use break_check::{
-    common::SlidingWindow, config::PolicyDefinition, db::RedisRateLimit, server::RateLimiterImpl,
+    common::SlidingWindow, config::PolicyDefinition, db::RedisRateLimit,
+    rate_limiter::RateLimiterImpl,
 };
 use redis::AsyncConnectionConfig;
 use std::time::SystemTime;

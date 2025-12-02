@@ -1,19 +1,22 @@
 mod common;
 mod config;
 mod db;
+mod health;
 mod proto;
-mod server;
+mod rate_limiter;
 
 use std::{sync::Arc, time::Duration};
 
 use log::{LevelFilter, debug};
 use proto::rate_limiter_server::RateLimiterServer;
 use redis::AsyncConnectionConfig;
-use server::RateLimiterImpl;
 use simple_logger::SimpleLogger;
 use tokio::signal;
 
-use crate::{common::SlidingWindow, config::load_config, db::RedisRateLimit};
+use crate::{
+    common::SlidingWindow, config::load_config, db::RedisRateLimit, health::HealthCheckImpl,
+    proto::health_server::HealthServer, rate_limiter::RateLimiterImpl,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -32,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     let rate_limit = RedisRateLimit::new(
-        conn,
+        conn.clone(),
         Duration::from_millis(config.server.redis_timeout_ms),
         Arc::new(config.default_policy),
         Arc::new(config.policies),
@@ -40,11 +43,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let rate_limiter = RateLimiterImpl::new(rate_limit);
+    let health = HealthCheckImpl::new(conn.clone());
 
     println!("Server listening on {}", addr);
 
     tonic::transport::Server::builder()
         .add_service(RateLimiterServer::new(rate_limiter))
+        .add_service(HealthServer::new(health))
         .serve_with_shutdown(addr, shutdown_signal())
         .await?;
 
