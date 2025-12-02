@@ -9,7 +9,6 @@ use std::{sync::Arc, time::Duration};
 
 use log::{LevelFilter, debug};
 use proto::rate_limiter_server::RateLimiterServer;
-use redis::AsyncConnectionConfig;
 use simple_logger::SimpleLogger;
 use tokio::signal;
 
@@ -28,22 +27,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let addr = config.server.address.parse()?;
 
-    let redis_config = AsyncConnectionConfig::default();
+    let timeout = Duration::from_millis(config.server.redis_timeout_ms);
+    let redis_config = redis::aio::ConnectionManagerConfig::new()
+        .set_response_timeout(timeout)
+        .set_connection_timeout(Duration::from_secs(1))
+        .set_factor(1000)
+        .set_max_delay(10000)
+        .set_exponent_base(2)
+        .set_number_of_retries(5);
+
     let client = redis::Client::open(config.server.redis_url)?;
-    let conn = client
-        .get_multiplexed_async_connection_with_config(&redis_config)
-        .await?;
+    let manager = tokio::time::timeout(
+        Duration::from_secs(10),
+        redis::aio::ConnectionManager::new_with_config(client, redis_config),
+    )
+    .await
+    .map_err(|_| "Failed to connect to Redis: timeout")?
+    .map_err(|e| format!("Failed to connect to Redis: {}", e))?;
 
     let rate_limit = RedisRateLimit::new(
-        conn.clone(),
-        Duration::from_millis(config.server.redis_timeout_ms),
+        manager.clone(),
+        timeout,
         Arc::new(config.default_policy),
         Arc::new(config.policies),
         SlidingWindow::new(),
     );
 
     let rate_limiter = RateLimiterImpl::new(rate_limit);
-    let health = HealthCheckImpl::new(conn.clone());
+    let health = HealthCheckImpl::new(manager.clone(), timeout);
 
     println!("Server listening on {}", addr);
 

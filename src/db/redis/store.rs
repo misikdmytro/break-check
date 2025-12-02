@@ -12,20 +12,20 @@ use crate::{
 
 use async_trait::async_trait;
 use log::debug;
-use redis::aio::MultiplexedConnection;
+use redis::aio::ConnectionLike;
 
 #[derive(Debug, Clone)]
-pub struct RedisRateLimit<A: RateLimitAlgorithm> {
-    conn: MultiplexedConnection,
+pub struct RedisRateLimit<A: RateLimitAlgorithm, C: ConnectionLike> {
+    conn: C,
     timeout: Duration,
     default_policy: Arc<PolicyDefinition>,
     policies: Arc<Vec<PolicyRule>>,
     algorithm: A,
 }
 
-impl<A: RateLimitAlgorithm> RedisRateLimit<A> {
+impl<A: RateLimitAlgorithm, C: ConnectionLike> RedisRateLimit<A, C> {
     pub fn new(
-        conn: MultiplexedConnection,
+        conn: C,
         timeout: Duration,
         default_policy: Arc<PolicyDefinition>,
         policies: Arc<Vec<PolicyRule>>,
@@ -82,7 +82,9 @@ static SCRIPT: LazyLock<redis::Script> = LazyLock::new(|| {
 });
 
 #[async_trait]
-impl<A: RateLimitAlgorithm + Send> RateLimitStore for RedisRateLimit<A> {
+impl<A: RateLimitAlgorithm + Send, C: ConnectionLike + Clone + Send> RateLimitStore
+    for RedisRateLimit<A, C>
+{
     async fn acquire(&mut self, config: &RateLimitConfig) -> AcquireResult {
         let policy = self
             .policies
