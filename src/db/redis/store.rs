@@ -1,4 +1,5 @@
 use std::{
+    fmt::Write,
     sync::{Arc, LazyLock},
     time::{Duration, SystemTime},
 };
@@ -41,9 +42,11 @@ impl<A: RateLimitAlgorithm> RedisRateLimit<A> {
 }
 
 macro_rules! format_key {
-    ($key:expr, $window:expr) => {
-        format!("{}.rate_limit.window.{}", $key, $window)
-    };
+    ($key:expr, $window:expr) => {{
+        let mut result = String::new();
+        write!(&mut result, "{}.rate_limit.window.{}", $key, $window).unwrap();
+        result
+    }};
 }
 
 macro_rules! join_and_unwrap {
